@@ -13,7 +13,6 @@ import (
 // Define a constant for your custom extension type
 const (
 	extensionHelloWorldType uint16 = 12345 // Choose a unique extension type
-	fileLocation            string = "C:\\Users\\danko\\Desktop\\Cocos\\GoExtendTLS"
 )
 
 // CustomHelloWorldExtension is a custom TLS extension with "Hello World!" value
@@ -73,9 +72,7 @@ func main() {
 }
 
 func startServer() {
-	cert_path := fileLocation + "//cert.pem"
-	key_path := fileLocation + "//key.pem"
-	cert, err := tlstools.LoadX509KeyPair(cert_path, key_path)
+	cert, err := tlstools.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
 		log.Fatalf("Server: loadkeys: %s", err)
 	}
