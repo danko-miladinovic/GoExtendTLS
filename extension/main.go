@@ -1,86 +1,109 @@
 package main
 
 import (
-	"crypto/x509"
 	"fmt"
 	"log"
 	"net"
 	"time"
 
-	utls "github.com/refraction-networking/utls"
+	tlstools "gitlab.com/go-extension/tls"
+	"golang.org/x/crypto/cryptobyte"
 )
 
+// Define a constant for your custom extension type
 const (
-	HelloWorldExtensionType uint16 = 0x1337 // custom extension type
-	fileLocation            string = "C:\\Users\\danko\\Desktop\\Cocos\\GoExtendTLS"
+	extensionHelloWorldType uint16 = 12345 // Choose a unique extension type
 )
 
-type HelloWorldExtension struct {
-	*utls.GenericExtension
-	Message string
+// CustomHelloWorldExtension is a custom TLS extension with "Hello World!" value
+type CustomHelloWorldExtension struct {
+	Value string
 }
 
-// // Len returns the length of the extension data
-// func (e *HelloWorldExtension) Len() int {
-// 	fmt.Printf("Len(): %d\n", 4+len(e.Message))
-// 	return 4 + len(e.Message) // 2 bytes for the extension type, 2 bytes for the length, plus the message length
-// }
-
-// // Read reads the extension data into the provided byte slice
-// func (e *HelloWorldExtension) Read(b []byte) (n int, err error) {
-// 	if len(b) < e.Len() {
-// 		return 0, io.ErrShortBuffer
-// 	}
-
-// 	// Write the extension type
-// 	b[0] = byte(HelloWorldExtensionType >> 8)
-// 	b[1] = byte(HelloWorldExtensionType & 0xff)
-
-// 	// Write the length of the extension data
-// 	b[2] = byte(len(e.Message) >> 8)
-// 	b[3] = byte(len(e.Message) & 0xff)
-
-// 	// Write the actual message
-// 	copy(b[4:], e.Message)
-
-// 	fmt.Printf("Read(): len(b): %d e.Len(): %d\n", len(b), e.Len())
-
-// 	return e.Len(), io.EOF
-// }
-
-func loadRootCAs() *x509.CertPool {
-	roots := x509.NewCertPool()
-	// Typically you load from a file, e.g., roots.AppendCertsFromPEM(certFile)
-	return roots
+// Implement the ExtensionId method
+func (e *CustomHelloWorldExtension) ExtensionId() uint16 {
+	return extensionHelloWorldType
 }
 
-func startTLSServer() {
-	cert_path := fileLocation + "//cert.pem"
-	key_path := fileLocation + "//key.pem"
-	cert, err := utls.LoadX509KeyPair(cert_path, key_path)
+// Implement the NegotiatedVersion method (required by the interface, but not used in this example)
+func (e *CustomHelloWorldExtension) NegotiatedVersion(vers uint16) {}
+
+// Implement the Negotiate method (only for servers, we'll return true to always include the extension)
+func (e *CustomHelloWorldExtension) Negotiate(messageType uint8) bool {
+	return true
+}
+
+// Implement the Len method to return the length of the extension data
+func (e *CustomHelloWorldExtension) Len(messageType uint8) int {
+	return len(e.Value)
+}
+
+// Implement the Marshal method to serialize the extension data
+func (e *CustomHelloWorldExtension) Marshal(messageType uint8, b *cryptobyte.Builder) {
+	b.AddBytes([]byte(e.Value))
+}
+
+// Implement the Unmarshal method to deserialize the extension data
+func (e *CustomHelloWorldExtension) Unmarshal(messageType uint8, b cryptobyte.String) bool {
+	var data []byte
+	if !b.ReadBytes(&data, len("Hello World!")) {
+		return false
+	}
+	e.Value = string(data)
+	return true
+}
+
+// Implement the Clone method to return a shallow copy of the extension
+func (e *CustomHelloWorldExtension) Clone() tlstools.Extension {
+	return &CustomHelloWorldExtension{Value: e.Value}
+}
+
+func main() {
+	go startServer()
+
+	// Give the server a moment to start
+	// In a real-world application, you'd want a more robust way to handle this
+	// such as checking the server's readiness.
+	select {
+	case <-time.After(1 * time.Second):
+	}
+
+	startClient()
+}
+
+func startServer() {
+	cert, err := tlstools.LoadX509KeyPair("cert.pem", "key.pem")
 	if err != nil {
 		log.Fatalf("Server: loadkeys: %s", err)
 	}
 
-	// TLS configuration
-	config := &utls.Config{
-		InsecureSkipVerify: true,
-		RootCAs:            loadRootCAs(),
-		Certificates:       []utls.Certificate{cert},
+	// Server TLS configuration
+	config := &tlstools.Config{
+		MinVersion: tlstools.VersionTLS12,
+		CipherSuites: []uint16{
+			tlstools.TLS_AES_128_GCM_SHA256,
+			tlstools.TLS_AES_128_CCM_SHA256,
+			tlstools.TLS_AES_128_CCM_8_SHA256,
+		},
+		Certificates: []tlstools.Certificate{cert},
+		Extensions: []tlstools.Extension{
+			&CustomHelloWorldExtension{},
+		},
 	}
 
-	// Listen for incoming connections
-	ln, err := utls.Listen("tcp", ":8443", config)
+	ln, err := tlstools.Listen("tcp", ":8443", config)
 	if err != nil {
-		log.Fatalf("Server: listen: %s", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 	defer ln.Close()
-	fmt.Println("Server: listening on :8443")
+
+	fmt.Println("Server listening on :8443")
 
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Fatalf("Server: accept: %s", err)
+			log.Printf("Failed to accept connection: %v", err)
+			continue
 		}
 
 		go handleConnection(conn)
@@ -89,107 +112,61 @@ func startTLSServer() {
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
-	fmt.Println("Server: new connection accepted")
 
-	cert_path := fileLocation + "//cert.pem"
-	key_path := fileLocation + "//key.pem"
-	cert, err := utls.LoadX509KeyPair(cert_path, key_path)
+	tlsConn, ok := conn.(*tlstools.Conn)
+	if !ok {
+		log.Println("Failed to convert connection to TLS")
+		return
+	}
+
+	err := tlsConn.Handshake()
 	if err != nil {
-		log.Fatalf("Server: loadkeys: %s", err)
+		log.Printf("TLS handshake failed: %v", err)
+		return
 	}
-
-	// TLS configuration
-	config := &utls.Config{
-		InsecureSkipVerify: true,
-		RootCAs:            loadRootCAs(),
-		Certificates:       []utls.Certificate{cert},
-		ServerName:         "localhost",
-	}
-
-	// Create uTLS connection to read the custom extension
-	// Conn := utls.UClient(conn, config, utls.HelloCustom)
-	uConn := utls.Server(conn, config)
-
-	// Complete the handshake to receive the ClientHello with extensions
-	if err := uConn.Handshake(); err != nil {
-		log.Fatalf("Server: handshake failed: %s", err)
-	}
-
-	// Look for the Hello World extension in the received ClientHello
-	// for _, ext := range uConn.Extensions {
-	// 	if ext, ok := ext.(*utls.GenericExtension); ok && ext.Id == HelloWorldExtensionType {
-	// 		// Parse the "Hello World!" message
-	// 		if len(ext.Data) > 2 {
-	// 			messageLength := int(ext.Data[0])<<8 | int(ext.Data[1])
-	// 			message := string(ext.Data[2 : 2+messageLength])
-	// 			fmt.Printf("Server: received message: %s\n", message)
-	// 		}
+	fmt.Printf("handleConnection done!\n")
+	// After the handshake, you can retrieve the custom extension value
+	// state := tlsConn.ConnectionState()
+	// for _, ext := range state.Extensions {
+	// 	if hwExt, ok := ext.(*CustomHelloWorldExtension); ok {
+	// 		fmt.Printf("Server received custom extension: %s\n", hwExt.Value)
 	// 	}
 	// }
 }
 
-func startTLSClient() {
-	cert_path := fileLocation + "//cert.pem"
-	key_path := fileLocation + "//key.pem"
-	cert, err := utls.LoadX509KeyPair(cert_path, key_path)
-	if err != nil {
-		log.Fatalf("Server: loadkeys: %s", err)
-	}
-
-	// TLS configuration
-	config := &utls.Config{
+func startClient() {
+	// Create a TLS configuration and add the custom extension
+	config := &tlstools.Config{
 		InsecureSkipVerify: true,
-		Certificates:       []utls.Certificate{cert},
+		CipherSuites: []uint16{
+			tlstools.TLS_AES_128_GCM_SHA256,
+			tlstools.TLS_AES_128_CCM_SHA256,
+			tlstools.TLS_AES_128_CCM_8_SHA256,
+		},
+		MinVersion: tlstools.VersionTLS12,
+		Extensions: []tlstools.Extension{
+			&CustomHelloWorldExtension{Value: "Hello World!"},
+		},
 	}
 
-	// Connect to the server
-	conn, err := net.Dial("tcp", "localhost:8443")
+	// Create a custom dialer to apply the TLS config
+	dialer := &tlstools.Dialer{
+		Config: config,
+	}
+
+	// Connect to the server using the custom extension
+	conn, err := dialer.Dial("tcp", "localhost:8443")
 	if err != nil {
-		log.Fatalf("Client: dial: %s", err)
+		log.Fatalf("Failed to connect: %v", err)
 	}
 	defer conn.Close()
 
-	// Create a new uTLS client connection
-	uConn := utls.UClient(conn, config, utls.HelloCustom)
-
-	message := "Hello World!"
-	// Create the custom Hello World extension and initialize the GenericExtension
-	helloWorldExt := &HelloWorldExtension{
-		GenericExtension: &utls.GenericExtension{
-			Id:   HelloWorldExtensionType,
-			Data: []byte(message),
-		},
-		Message: message,
+	// Perform a handshake to ensure the custom extension is sent
+	tlsConn := conn.(*tlstools.Conn)
+	err = tlsConn.Handshake()
+	if err != nil {
+		log.Fatalf("TLS handshake failed: %v", err)
 	}
 
-	// Set custom extensions
-	spec := &utls.ClientHelloSpec{
-		Extensions: []utls.TLSExtension{
-			helloWorldExt,
-		},
-		// TLSVersMin: utls.VersionTLS12,
-		// TLSVersMax: utls.VersionTLS13,
-	}
-
-	if err := uConn.ApplyPreset(spec); err != nil {
-		log.Fatalf("Client: ApplyPreset: %s", err)
-	}
-
-	// Complete the handshake
-	if err := uConn.Handshake(); err != nil {
-		log.Fatalf("Client: handshake: %s", err)
-	}
-
-	fmt.Println("Client: TLS handshake completed")
-}
-
-func main() {
-	// Start the server in a goroutine
-	go startTLSServer()
-
-	// Give the server some time to start
-	time.Sleep(2 * time.Second)
-
-	// Start the client
-	startTLSClient()
+	fmt.Println("Client connected with custom TLS extension")
 }
