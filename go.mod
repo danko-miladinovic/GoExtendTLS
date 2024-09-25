@@ -1,21 +1,18 @@
-module extension
+module github.com/danko-miladinovic/GoExtendTLS
 
-go 1.22.0
+go 1.21
+
+toolchain go1.22.1
 
 require (
-	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
-	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/pedroalbanese/camellia v0.0.0-20220911183557-30cc05c20118 // indirect
-	github.com/pmorjan/kmod v1.1.1 // indirect
-	gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7 // indirect
-	gitlab.com/go-extension/rand v0.0.0-20240303103951-707937a049b5 // indirect
+	google.golang.org/grpc v1.67.0
+	google.golang.org/protobuf v1.34.2
 )
 
 require (
-	github.com/andybalholm/brotli v1.1.0 // indirect
-	github.com/cloudflare/circl v1.4.0 // indirect
-	github.com/klauspost/compress v1.17.9 // indirect
-	gitlab.com/go-extension/tls v0.0.0-20240704090749-9247b89354f2
-	golang.org/x/crypto v0.26.0
-	golang.org/x/sys v0.24.0 // indirect
+	golang.org/x/net v0.28.0 // indirect
+	golang.org/x/text v0.17.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20240814211410-ddb44dafa142 // indirect
 )
+
+require golang.org/x/sys v0.24.0 // indirect

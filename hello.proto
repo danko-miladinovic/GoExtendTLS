@@ -1,0 +1,15 @@
+syntax = "proto3";
+option go_package = "github.com/danko-miladinovic/GoExtendTLS/hello";
+
+
+message HelloRequest {
+    string name = 1;
+}
+
+message HelloResponse {
+    string message = 2;
+}
+
+service HelloWorld {
+    rpc Hello(HelloRequest) returns (HelloResponse);
+}
