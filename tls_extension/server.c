@@ -8,13 +8,24 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <sys/types.h>
+#include "tls_extension.h"
 
-// #define PORT 4433
-// #define CERT_FILE "server-cert.pem"
-// #define KEY_FILE  "server-key.pem"
-#define CUSTOM_NONCE_EXT_TYPE 12345  // Custom extension type ID
-#define SERVER_ATT_REPORT_EXT_TYPE 54321 
-#define CLIENT_RANDOM_SIZE 32
+typedef struct 
+{
+    SSL_CTX *ctx;
+    int server_fd;
+    struct sockaddr_in addr;
+} tls_server_connection;
+
+typedef struct
+{
+    SSL *ssl;
+    
+} tls_connection;
+
+
+tls_server_connection *tls_server = NULL;
+
 
 void init_openssl() {
     SSL_load_error_strings();
@@ -213,7 +224,8 @@ int add_custom_tls_extension(SSL_CTX *ctx) {
     return 1;
 }
 
-int tls_extension_server(char *cert_file, char *key_file, int port) {
+// Function to start the tls server
+int start_tls_server(char *cert_file, char *key_file, int port) {
     int server_fd;
     struct sockaddr_in addr;
     SSL_CTX *ctx;
@@ -274,4 +286,14 @@ int tls_extension_server(char *cert_file, char *key_file, int port) {
     SSL_CTX_free(ctx);
     cleanup_openssl();
     return 0;
+}
+
+// Function to accept a client connection
+int tls_accept(int server_fd) {
+
+}
+
+// Function to close the server
+int tls_close(int server_fd) {
+
 }
