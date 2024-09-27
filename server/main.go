@@ -1,14 +1,16 @@
 package main
 
 import (
+	"C"
 	"context"
-	"fmt"
 	"log"
 	"net"
 
 	"github.com/danko-miladinovic/GoExtendTLS/hello"
 	"google.golang.org/grpc"
 )
+
+// #include "tls_extension/tls_extension.h"
 
 type HelloWorld struct {
 	hello.UnimplementedHelloWorldServer
@@ -22,7 +24,7 @@ func (h *HelloWorld) Hello(ctx context.Context, r *hello.HelloRequest) (*hello.H
 }
 
 func main() {
-	listener, err := net.Listen("tcp", "127.0.0.1:8089")
+	listener, err := net.Listen("tcp", "127.0.0.1:7022")
 	if err != nil {
 		log.Fatalf("cannot create listener: %v", err)
 	}
@@ -32,7 +34,6 @@ func main() {
 
 	hello.RegisterHelloWorldServer(server, service)
 
-	fmt.Print("AAAAAAAAAAAA\n")
 	err = server.Serve(listener)
 	if err != nil {
 		log.Fatalf("could not server: %v", err)

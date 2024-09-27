@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	conn, err := grpc.NewClient("127.0.0.1:8089")
+	conn, err := grpc.NewClient("127.0.0.1:7022")
 	if err != nil {
 		log.Fatalf("cannot dial server")
 	}
