@@ -8,19 +8,6 @@
 #include <string.h>
 #include <sys/types.h>
 
-// typedef struct 
-// {
-//     SSL_CTX *ctx;
-//     int server_fd;
-//     struct sockaddr_in addr;
-// } tls_server_connection;
-
-// typedef struct
-// {
-//     SSL *ssl;
-//     int client_fd;
-// } tls_connection;
-
 void init_openssl() {
     SSL_load_error_strings();
     OpenSSL_add_ssl_algorithms();
@@ -30,11 +17,16 @@ void cleanup_openssl() {
     EVP_cleanup();
 }
 
-SSL_CTX *create_context() {
+SSL_CTX *create_context(int is_server) {
     const SSL_METHOD *method;
     SSL_CTX *ctx;
 
-    method = SSLv23_server_method();
+    if (is_server) {
+        method = TLS_server_method();
+    } else {
+        method = TLS_client_method();
+    }
+    
     ctx = SSL_CTX_new(method);
     if (!ctx) {
         perror("Unable to create SSL context");
@@ -230,7 +222,7 @@ tls_server_connection* start_tls_server(char *cert_file, char *key_file, int por
     tls_server_connection *tls_server = (tls_server_connection*)malloc(sizeof(tls_server_connection));
 
     init_openssl();
-    tls_server->ctx = create_context();
+    tls_server->ctx = create_context(TLS_SERVER_CTX);
     if (tls_server->ctx == NULL) {
         free(tls_server);
         perror("Unable to create contex");
@@ -242,7 +234,7 @@ tls_server_connection* start_tls_server(char *cert_file, char *key_file, int por
         perror("Unable to create contex");
         return NULL;
     }
-    // add_custom_tls_extension(ctx);
+    // add_custom_tls_extension(tls_server->ctx);
 
     tls_server->server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (tls_server->server_fd < 0) {
@@ -300,7 +292,8 @@ tls_connection* tls_server_accept(tls_server_connection *tls_server) {
     }
 
     conn->ssl = SSL_new(tls_server->ctx);
-    conn->client_fd = client_fd;
+    conn->socket_fd = client_fd;
+    conn->ctx = NULL;
     SSL_set_fd(conn->ssl, client_fd);
 
     if (SSL_accept(conn->ssl) <= 0) {
@@ -330,10 +323,74 @@ int tls_write(tls_connection *conn, const void *buf, int num) {
 }
 
 void tls_close(tls_connection *conn) {
-    if (conn != NULL && conn->ssl != NULL) {
-        SSL_shutdown(conn->ssl);
-        SSL_free(conn->ssl);
-        close(conn->client_fd);
+    if (conn != NULL) {
+        // if (conn->ssl != NULL) {
+        //     SSL_shutdown(conn->ssl);
+        // }
+        // if (conn->socket_fd >= 0) {
+        //     close(conn->socket_fd);
+        // }
+        // SSL_free(conn->ssl);
+        // if (conn->ctx != NULL) {
+        //     SSL_CTX_free(conn->ctx);
+        // }
+        free(conn);
     }
-    free(conn);
+}
+
+void tls_close_cleanup(tls_connection *conn) {
+    tls_close(conn);
+    cleanup_openssl();
+}
+
+void custom_free(void *ptr) {
+    free(ptr);
+}
+
+tls_connection* new_tls_connection(char *address, int port) {
+    SSL_CTX *ctx;
+    SSL *ssl;
+    int server_fd;
+    struct sockaddr_in addr;
+    tls_connection *tls_client = (tls_connection*)malloc(sizeof(tls_connection));
+
+    init_openssl();
+    ctx = create_context(TLS_CLIENT_CTX);
+    if (ctx == NULL) {
+        perror("could not create context");
+        free(tls_client);
+        return NULL;
+    }
+    // add_custom_tls_extension(ctx);
+
+    server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("unable to create socket");
+        free(tls_client);
+        return NULL;
+    }
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    inet_pton(AF_INET, address, &addr.sin_addr);
+
+    if (connect(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("unable to connect");
+        free(tls_client);
+        return NULL;
+    }
+
+    ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, server_fd);
+
+    if (SSL_connect(ssl) <= 0) {
+        perror("unable to connect");
+        free(tls_client);
+        return NULL;
+    }
+
+    tls_client->socket_fd = server_fd;
+    tls_client->ssl = ssl;
+    tls_client->ctx = ctx;
+    return tls_client;
 }

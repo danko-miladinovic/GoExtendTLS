@@ -15,7 +15,7 @@ type HelloWorld struct {
 
 func (h *HelloWorld) Hello(ctx context.Context, r *hello.HelloRequest) (*hello.HelloResponse, error) {
 	ret := hello.HelloResponse{
-		Message: "Hello World!" + r.Name,
+		Message: "Hello World! " + r.Name,
 	}
 	return &ret, nil
 }

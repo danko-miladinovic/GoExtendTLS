@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/danko-miladinovic/GoExtendTLS/hello"
+	tlsExtension "github.com/danko-miladinovic/GoExtendTLS/listener"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
-	conn, err := grpc.NewClient("127.0.0.1:7022", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient("127.0.0.1:7022",
+		grpc.WithContextDialer(tlsExtension.CustomDialer),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Fatalf("cannot dial server")
 	}

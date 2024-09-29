@@ -5,6 +5,7 @@ package tlsExtension
 import "C"
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strconv"
@@ -86,12 +87,12 @@ func (c *CustomTLSConn) Close() error {
 }
 
 func (c *CustomTLSConn) LocalAddr() net.Addr {
-	return &net.TCPAddr{}
+	return nil
 }
 
 func (c *CustomTLSConn) RemoteAddr() net.Addr {
 	// Return remote address
-	return &net.TCPAddr{}
+	return nil
 }
 
 func (c *CustomTLSConn) SetDeadline(t time.Time) error {
@@ -105,4 +106,38 @@ func (c *CustomTLSConn) SetReadDeadline(t time.Time) error {
 
 func (c *CustomTLSConn) SetWriteDeadline(t time.Time) error {
 	return nil
+}
+
+func DialTLSClient(hostname string, port int) (net.Conn, error) {
+	cHostName := C.CString(hostname)
+	defer C.custom_free(unsafe.Pointer(cHostName))
+
+	conn := C.new_tls_connection(cHostName, C.int(port))
+	if conn == nil {
+		return nil, fmt.Errorf("could not create connection")
+	}
+
+	return &CustomTLSConn{tlsConn: conn}, nil
+}
+
+func CustomDialer(ctx context.Context, addr string) (net.Conn, error) {
+	ip, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("could not create a custom dialer")
+	}
+
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return nil, fmt.Errorf("bad format of IP address: %v", err)
+	}
+
+	cAddr := C.CString(ip)
+	defer C.custom_free(unsafe.Pointer(cAddr))
+
+	conn, err := DialTLSClient(ip, p)
+	if err != nil {
+		return nil, fmt.Errorf("could not create TLS connection")
+	}
+
+	return conn, nil
 }
