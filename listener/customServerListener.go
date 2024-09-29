@@ -27,7 +27,7 @@ func Listen(addr string, certFile string, keyFile string) (net.Listener, error) 
 		return nil, fmt.Errorf("bad format of IP address: %v", err)
 	}
 
-	return &CustomServerListener{tlsListener: C.start_tls_server(C.CString(certFile), C.CString(certFile), C.int(p))}, nil
+	return &CustomServerListener{tlsListener: C.start_tls_server(C.CString(certFile), C.CString(keyFile), C.int(p))}, nil
 }
 
 // Accept implements the Accept method in the [Listener] interface; it

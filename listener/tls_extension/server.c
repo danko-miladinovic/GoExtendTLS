@@ -45,13 +45,16 @@ SSL_CTX *create_context() {
     return ctx;
 }
 
-void configure_context(SSL_CTX *ctx, char *cert_file, char *key_file) {
+int configure_context(SSL_CTX *ctx, char *cert_file, char *key_file) {
+    printf("Cert file: %s\n", cert_file);
+    printf("Key file: %s\n", key_file);
     // Load server certificate and private key
     if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0 ||
         SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0) {
-        ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+        perror("could not configure context");
+        return EXIT_FAILURE;
     }
+    return 0;
 }
 
 void sprint_string_hex(char* dst, const unsigned char* s, int len){ 
@@ -234,7 +237,11 @@ tls_server_connection* start_tls_server(char *cert_file, char *key_file, int por
         return NULL;
     }
 
-    configure_context(tls_server->ctx, cert_file, key_file);
+    if (configure_context(tls_server->ctx, cert_file, key_file) != 0) {
+        free(tls_server);
+        perror("Unable to create contex");
+        return NULL;
+    }
     // add_custom_tls_extension(ctx);
 
     tls_server->server_fd = socket(AF_INET, SOCK_STREAM, 0);

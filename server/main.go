@@ -21,7 +21,7 @@ func (h *HelloWorld) Hello(ctx context.Context, r *hello.HelloRequest) (*hello.H
 }
 
 func main() {
-	listener, err := tlsExtension.Listen("127.0.0.1:7022", "../cert.pem", "../key.pem")
+	listener, err := tlsExtension.Listen("127.0.0.1:7022", "/home/cocosai/danko/test/grpc_test/GoExtendTLS/server-cert.pem", "/home/cocosai/danko/test/grpc_test/GoExtendTLS/server-key.pem")
 	if err != nil {
 		log.Fatalf("cannot create listener: %v", err)
 	}
