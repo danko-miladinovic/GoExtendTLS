@@ -1,31 +1,25 @@
-#include <openssl/ssl.h>
+#include "tls_extension.h"
 #include <openssl/err.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
 #include <openssl/evp.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 #include <string.h>
 #include <sys/types.h>
-#include "tls_extension.h"
 
-typedef struct 
-{
-    SSL_CTX *ctx;
-    int server_fd;
-    struct sockaddr_in addr;
-} tls_server_connection;
+// typedef struct 
+// {
+//     SSL_CTX *ctx;
+//     int server_fd;
+//     struct sockaddr_in addr;
+// } tls_server_connection;
 
-typedef struct
-{
-    SSL *ssl;
-    
-} tls_connection;
-
-
-tls_server_connection *tls_server = NULL;
-
+// typedef struct
+// {
+//     SSL *ssl;
+//     int client_fd;
+// } tls_connection;
 
 void init_openssl() {
     SSL_load_error_strings();
@@ -45,7 +39,7 @@ SSL_CTX *create_context() {
     if (!ctx) {
         perror("Unable to create SSL context");
         ERR_print_errors_fp(stderr);
-        exit(EXIT_FAILURE);
+        return NULL; // exit(EXIT_FAILURE);
     }
 
     return ctx;
@@ -225,75 +219,114 @@ int add_custom_tls_extension(SSL_CTX *ctx) {
 }
 
 // Function to start the tls server
-int start_tls_server(char *cert_file, char *key_file, int port) {
-    int server_fd;
-    struct sockaddr_in addr;
-    SSL_CTX *ctx;
+tls_server_connection* start_tls_server(char *cert_file, char *key_file, int port) {
+    // int server_fd;
+    // struct sockaddr_in addr;
+    // SSL_CTX *ctx;
+
+    tls_server_connection *tls_server = (tls_server_connection*)malloc(sizeof(tls_server_connection));
 
     init_openssl();
-    ctx = create_context();
-    configure_context(ctx, cert_file, key_file);
-    add_custom_tls_extension(ctx);
+    tls_server->ctx = create_context();
+    if (tls_server->ctx == NULL) {
+        free(tls_server);
+        perror("Unable to create contex");
+        return NULL;
+    }
 
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
+    configure_context(tls_server->ctx, cert_file, key_file);
+    // add_custom_tls_extension(ctx);
+
+    tls_server->server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (tls_server->server_fd < 0) {
+        free(tls_server);
         perror("Unable to create socket");
-        exit(EXIT_FAILURE);
+        return NULL;
     }
 
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = INADDR_ANY;
+    tls_server->addr.sin_family = AF_INET;
+    tls_server->addr.sin_port = htons(port);
+    tls_server->addr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (bind(tls_server->server_fd, (struct sockaddr*)&(tls_server->addr), sizeof(tls_server->addr)) < 0) {
+        free(tls_server);
         perror("Unable to bind");
-        exit(EXIT_FAILURE);
+        return NULL;
     }
 
-    if (listen(server_fd, 1) < 0) {
+    if (listen(tls_server->server_fd, 1) < 0) {
+        free(tls_server);
         perror("Unable to listen");
-        exit(EXIT_FAILURE);
+        return NULL;
     }
 
     printf("Listening on port: %d\n", port);
 
-    while (1) {
-        struct sockaddr_in addr;
-        uint32_t len = sizeof(addr);
-        SSL *ssl;
+    // while (1) {
 
-        int client = accept(server_fd, (struct sockaddr*)&addr, &len);
-        if (client < 0) {
-            perror("Unable to accept");
-            exit(EXIT_FAILURE);
-        }
+    //     } else {
+    //         SSL_write(ssl, "Hello, Secure World!\n", strlen("Hello, Secure World!\n"));
+    //     }
 
-        ssl = SSL_new(ctx);
-        SSL_set_fd(ssl, client);
+    //     SSL_shutdown(ssl);
+    //     SSL_free(ssl);
+    //     close(client);
+    // }
 
-        if (SSL_accept(ssl) <= 0) {
-            ERR_print_errors_fp(stderr);
-        } else {
-            SSL_write(ssl, "Hello, Secure World!\n", strlen("Hello, Secure World!\n"));
-        }
-
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        close(client);
-    }
-
-    close(server_fd);
-    SSL_CTX_free(ctx);
-    cleanup_openssl();
-    return 0;
+    // close(server_fd);
+    // SSL_CTX_free(ctx);
+    // cleanup_openssl();
+    return tls_server;
 }
 
 // Function to accept a client connection
-int tls_accept(int server_fd) {
+tls_connection* tls_server_accept(tls_server_connection *tls_server) {
+    // struct sockaddr_in addr;
+    uint32_t len = sizeof(tls_server->addr);
+    tls_connection *conn = (tls_connection*)malloc(sizeof(tls_connection));
 
+    int client_fd = accept(tls_server->server_fd, (struct sockaddr*)&(tls_server->addr), &len);
+    if (client_fd < 0) {
+        perror("Unable to accept");
+        free(conn);
+        return NULL;
+    }
+
+    conn->ssl = SSL_new(tls_server->ctx);
+    conn->client_fd = client_fd;
+    SSL_set_fd(conn->ssl, client_fd);
+
+    if (SSL_accept(conn->ssl) <= 0) {
+        printf("Unable to accept. Handshake failed.\n");
+        free(conn);
+        return NULL;
+    }
+
+    return conn;
 }
 
 // Function to close the server
-int tls_close(int server_fd) {
+int tls_server_close(tls_server_connection *tls_server) {
+    close(tls_server->server_fd);
+    SSL_CTX_free(tls_server->ctx);
+    cleanup_openssl();
+    free(tls_server);
+    return 0;
+}
 
+int tls_read(tls_connection *conn, void *buf, int num) {
+    return SSL_read(conn->ssl, buf, num);
+}
+
+int tls_write(tls_connection *conn, const void *buf, int num) {
+    return SSL_write(conn->ssl, buf, num);
+}
+
+void tls_close(tls_connection *conn) {
+    if (conn != NULL && conn->ssl != NULL) {
+        SSL_shutdown(conn->ssl);
+        SSL_free(conn->ssl);
+        close(conn->client_fd);
+    }
+    free(conn);
 }
