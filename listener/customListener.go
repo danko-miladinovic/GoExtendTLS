@@ -13,12 +13,14 @@ import (
 	"unsafe"
 )
 
+const inetAddrLen = 16
+
 type CustomServerListener struct {
 	tlsListener *C.tls_server_connection
 }
 
 func Listen(addr string, certFile string, keyFile string) (net.Listener, error) {
-	_, port, err := net.SplitHostPort(addr)
+	ip, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("error while creating listener: %v", err)
 	}
@@ -28,7 +30,15 @@ func Listen(addr string, certFile string, keyFile string) (net.Listener, error) 
 		return nil, fmt.Errorf("bad format of IP address: %v", err)
 	}
 
-	return &CustomServerListener{tlsListener: C.start_tls_server(C.CString(certFile), C.CString(keyFile), C.int(p))}, nil
+	cCertFile := C.CString(certFile)
+	defer C.custom_free(unsafe.Pointer(cCertFile))
+	cKeyFile := C.CString(keyFile)
+	defer C.custom_free(unsafe.Pointer(cKeyFile))
+	cIP := C.CString(ip)
+	defer C.custom_free(unsafe.Pointer(cIP))
+
+	fmt.Println("Listen called for something")
+	return &CustomServerListener{tlsListener: C.start_tls_server(cIP, cCertFile, cKeyFile, C.int(p))}, nil
 }
 
 // Accept implements the Accept method in the [Listener] interface; it
@@ -39,7 +49,7 @@ func (l *CustomServerListener) Accept() (net.Conn, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("could not accept connection")
 	}
-
+	fmt.Printf("CustomServerListener Accept called\n")
 	return &CustomTLSConn{tlsConn: conn}, nil
 }
 
@@ -57,7 +67,22 @@ func (l *CustomServerListener) Close() error {
 // The Addr returned is shared by all invocations of Addr, so
 // do not modify it.
 func (l *CustomServerListener) Addr() net.Addr {
-	return &net.TCPAddr{IP: net.IPv4(0, 0, 0, 0), Port: 4433}
+	cIP := C.tls_server_return_ip(l.tlsListener)
+	// defer C.custom_free(unsafe.Pointer(cIP))
+
+	ip := C.GoString(cIP)
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		fmt.Println("Invalid IP address")
+		return nil
+	}
+
+	port := C.tls_server_return_port(l.tlsListener)
+
+	fmt.Printf("Server IP Address: %s:%d\n", ip, int(port))
+
+	return &net.TCPAddr{IP: parsedIP, Port: int(port)}
 }
 
 type CustomTLSConn struct {
@@ -65,6 +90,7 @@ type CustomTLSConn struct {
 }
 
 func (c *CustomTLSConn) Read(b []byte) (int, error) {
+	// fmt.Println("CustomTLSConn - Read called")
 	n := int(C.tls_read(c.tlsConn, unsafe.Pointer(&b[0]), C.int(len(b))))
 	if n < 0 {
 		return 0, fmt.Errorf("could not read from TLS")
@@ -74,6 +100,7 @@ func (c *CustomTLSConn) Read(b []byte) (int, error) {
 }
 
 func (c *CustomTLSConn) Write(b []byte) (int, error) {
+	fmt.Println("CustomTLSConn - Write called")
 	n := int(C.tls_write(c.tlsConn, unsafe.Pointer(&b[0]), C.int(len(b))))
 	if n < 0 {
 		return 0, fmt.Errorf("could not write to TLS")
@@ -82,35 +109,84 @@ func (c *CustomTLSConn) Write(b []byte) (int, error) {
 }
 
 func (c *CustomTLSConn) Close() error {
+	fmt.Println("CustomTLSConn - Close called")
 	C.tls_close(c.tlsConn)
 	return nil
 }
 
 func (c *CustomTLSConn) LocalAddr() net.Addr {
-	return nil
+	fmt.Println("CustomTLSConn - LocalAddr called")
+
+	cIP := C.tls_conn_return_addr(c.tlsConn)
+	ipLength := C.strlen(cIP)
+	defer C.custom_free(unsafe.Pointer(cIP))
+
+	ip := C.GoStringN(cIP, C.int(ipLength))
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		fmt.Println("Invalid IP address")
+		return nil
+	}
+
+	port := C.tls_return_local_port(c.tlsConn)
+
+	fmt.Printf("CustomTLSConn - LocalAddr IP Address: %s:%d\n", ip, int(port))
+
+	return &net.TCPAddr{IP: parsedIP, Port: int(port)}
 }
 
 func (c *CustomTLSConn) RemoteAddr() net.Addr {
-	// Return remote address
-	return nil
+	fmt.Println("CustomTLSConn - RemoteAddr called")
+	cIP := C.tls_conn_remote_addr(c.tlsConn)
+	if cIP == nil {
+		fmt.Printf("RemoteAddr error while fetching ip")
+		return nil
+	}
+
+	ipLength := C.strlen(cIP)
+	defer C.custom_free(unsafe.Pointer(cIP))
+
+	ip := C.GoStringN(cIP, C.int(ipLength))
+
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		fmt.Println("Invalid IP address")
+		return nil
+	}
+
+	port := C.tls_return_remote_port(c.tlsConn)
+
+	fmt.Printf("CustomTLSConn - RemoteAddr IP Address: %s:%d\n", ip, int(port))
+
+	return &net.TCPAddr{IP: parsedIP, Port: int(port)}
 }
 
 func (c *CustomTLSConn) SetDeadline(t time.Time) error {
-	// Set deadlines (e.g., using syscall or C functions)
+	sec, usec := timeToTimeout(t)
+	if C.set_socket_timeout(c.tlsConn, C.int(sec), C.int(usec)) < 0 {
+		return fmt.Errorf("could not set deadline")
+	}
+
+	fmt.Println("CustomTLSConn - SetDeadline called")
 	return nil
 }
 
 func (c *CustomTLSConn) SetReadDeadline(t time.Time) error {
+	fmt.Println("CustomTLSConn - SetReadDeadline called")
+	c.SetDeadline(t)
 	return nil
 }
 
 func (c *CustomTLSConn) SetWriteDeadline(t time.Time) error {
+	fmt.Println("CustomTLSConn - SetWriteDeadline called")
+	c.SetDeadline(t)
 	return nil
 }
 
 func DialTLSClient(hostname string, port int) (net.Conn, error) {
 	cHostName := C.CString(hostname)
-	defer C.custom_free(unsafe.Pointer(cHostName))
+	// defer C.custom_free(unsafe.Pointer(cHostName))
 
 	conn := C.new_tls_connection(cHostName, C.int(port))
 	if conn == nil {
@@ -131,13 +207,22 @@ func CustomDialer(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("bad format of IP address: %v", err)
 	}
 
-	cAddr := C.CString(ip)
-	defer C.custom_free(unsafe.Pointer(cAddr))
-
 	conn, err := DialTLSClient(ip, p)
 	if err != nil {
 		return nil, fmt.Errorf("could not create TLS connection")
 	}
 
+	fmt.Printf("Created CustomDialer\n")
 	return conn, nil
+}
+
+func timeToTimeout(t time.Time) (int, int) {
+	if t.IsZero() {
+		return 0, 0
+	}
+
+	d := time.Until(t)
+	seconds := int(d.Seconds())
+	microseconds := int(d.Nanoseconds()/1000) % 1_000_000
+	return seconds, microseconds
 }

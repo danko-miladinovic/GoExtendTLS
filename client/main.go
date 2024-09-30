@@ -13,6 +13,7 @@ import (
 )
 
 func main() {
+	// conn, err := grpc.NewClient("127.0.0.1:7022", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	conn, err := grpc.NewClient("127.0.0.1:7022",
 		grpc.WithContextDialer(tlsExtension.CustomDialer),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))

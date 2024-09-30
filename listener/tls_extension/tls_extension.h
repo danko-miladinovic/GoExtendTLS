@@ -22,9 +22,11 @@ typedef struct tls_c
     SSL_CTX *ctx;
     SSL *ssl;
     int socket_fd;
+    struct sockaddr_in local_addr;
+    struct sockaddr_in remote_addr;
 } tls_connection;
 
-tls_server_connection* start_tls_server(char *cert_file, char *key_file, int port);
+tls_server_connection* start_tls_server(char *ip, char *cert_file, char *key_file, int port);
 tls_connection* tls_server_accept(tls_server_connection *tls_server);
 int tls_server_close(tls_server_connection *tls_server);
 int tls_read(tls_connection *conn, void *buf, int num);

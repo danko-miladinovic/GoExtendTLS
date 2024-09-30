@@ -7,6 +7,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 
 void init_openssl() {
     SSL_load_error_strings();
@@ -214,11 +216,7 @@ int add_custom_tls_extension(SSL_CTX *ctx) {
 }
 
 // Function to start the tls server
-tls_server_connection* start_tls_server(char *cert_file, char *key_file, int port) {
-    // int server_fd;
-    // struct sockaddr_in addr;
-    // SSL_CTX *ctx;
-
+tls_server_connection* start_tls_server(char *ip, char *cert_file, char *key_file, int port) {
     tls_server_connection *tls_server = (tls_server_connection*)malloc(sizeof(tls_server_connection));
 
     init_openssl();
@@ -245,7 +243,12 @@ tls_server_connection* start_tls_server(char *cert_file, char *key_file, int por
 
     tls_server->addr.sin_family = AF_INET;
     tls_server->addr.sin_port = htons(port);
-    tls_server->addr.sin_addr.s_addr = INADDR_ANY;
+    // tls_server->addr.sin_addr.s_addr = INADDR_ANY;
+
+    if (inet_pton(AF_INET, ip, &(tls_server->addr.sin_addr)) <= 0) {
+        perror("Invalid IP address\n");
+        return NULL;
+    }
 
     if (bind(tls_server->server_fd, (struct sockaddr*)&(tls_server->addr), sizeof(tls_server->addr)) < 0) {
         free(tls_server);
@@ -260,21 +263,6 @@ tls_server_connection* start_tls_server(char *cert_file, char *key_file, int por
     }
 
     printf("Listening on port: %d\n", port);
-
-    // while (1) {
-
-    //     } else {
-    //         SSL_write(ssl, "Hello, Secure World!\n", strlen("Hello, Secure World!\n"));
-    //     }
-
-    //     SSL_shutdown(ssl);
-    //     SSL_free(ssl);
-    //     close(client);
-    // }
-
-    // close(server_fd);
-    // SSL_CTX_free(ctx);
-    // cleanup_openssl();
     return tls_server;
 }
 
@@ -305,6 +293,26 @@ tls_connection* tls_server_accept(tls_server_connection *tls_server) {
     return conn;
 }
 
+char* tls_return_ip(struct sockaddr_in  *addr) {
+    char *ip_str = (char*)malloc(INET_ADDRSTRLEN*sizeof(char));
+
+    if (inet_ntop(AF_INET, &(addr->sin_addr), ip_str, INET_ADDRSTRLEN) == NULL) {
+        perror("inet_ntop");
+        free(ip_str);
+        return NULL;
+    }
+
+    return ip_str;
+}
+
+char* tls_server_return_ip(tls_server_connection *tls_server) {
+    return tls_return_ip(&(tls_server->addr));
+}
+
+int tls_server_return_port(tls_server_connection *tls_server) {
+    return ntohs(tls_server->addr.sin_port);
+}
+
 // Function to close the server
 int tls_server_close(tls_server_connection *tls_server) {
     close(tls_server->server_fd);
@@ -324,23 +332,62 @@ int tls_write(tls_connection *conn, const void *buf, int num) {
 
 void tls_close(tls_connection *conn) {
     if (conn != NULL) {
-        // if (conn->ssl != NULL) {
-        //     SSL_shutdown(conn->ssl);
-        // }
-        // if (conn->socket_fd >= 0) {
-        //     close(conn->socket_fd);
-        // }
-        // SSL_free(conn->ssl);
-        // if (conn->ctx != NULL) {
-        //     SSL_CTX_free(conn->ctx);
-        // }
+        if (conn->ssl != NULL) {
+            SSL_shutdown(conn->ssl);
+        }
+        if (conn->socket_fd >= 0) {
+            close(conn->socket_fd);
+        }
+        SSL_free(conn->ssl);
+        if (conn->ctx != NULL) {
+            SSL_CTX_free(conn->ctx);
+        }
         free(conn);
+        conn = NULL;
     }
 }
 
 void tls_close_cleanup(tls_connection *conn) {
     tls_close(conn);
     cleanup_openssl();
+}
+
+char* tls_conn_return_addr(tls_connection *conn) {
+    socklen_t len = sizeof(conn->local_addr);
+
+    if (getsockname(conn->socket_fd, (struct sockaddr*)(&conn->local_addr), &len) == -1) {
+        return NULL;
+    }
+
+    return tls_return_ip(&(conn->local_addr));
+}
+
+char* tls_conn_remote_addr(tls_connection *conn) {
+    // socklen_t addr_len = sizeof(conn->remote_addr);
+    // char *ip_str = (char*)malloc(INET_ADDRSTRLEN*sizeof(char));
+
+    // if (getpeername(conn->socket_fd, (struct sockaddr*)&(conn->remote_addr), &addr_len) == -1) {
+    //     perror("getpeername failed");
+    //     free(ip_str);
+    //     return NULL;
+    // }
+
+    // if (inet_ntop(AF_INET, &(conn->remote_addr.sin_addr), ip_str, sizeof(ip_str)) == NULL) {
+    //     perror("inet_ntop failed");
+    //     free(ip_str);
+    //     return NULL;
+    // }
+
+    // return ip_str;
+    return NULL;
+}
+
+int tls_return_local_port(tls_connection *conn) {
+    return ntohs(conn->local_addr.sin_port);
+}
+
+int tls_return_remote_port(tls_connection *conn) {
+    return ntohs(conn->remote_addr.sin_port);
 }
 
 void custom_free(void *ptr) {
@@ -351,7 +398,6 @@ tls_connection* new_tls_connection(char *address, int port) {
     SSL_CTX *ctx;
     SSL *ssl;
     int server_fd;
-    struct sockaddr_in addr;
     tls_connection *tls_client = (tls_connection*)malloc(sizeof(tls_connection));
 
     init_openssl();
@@ -370,11 +416,14 @@ tls_connection* new_tls_connection(char *address, int port) {
         return NULL;
     }
 
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    inet_pton(AF_INET, address, &addr.sin_addr);
+    tls_client->local_addr.sin_family = AF_INET;
+    tls_client->local_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, address, &(tls_client->local_addr.sin_addr)) <= 0) {
+        perror("Invalid IP address\n");
+        return NULL;
+    }
 
-    if (connect(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (connect(server_fd, (struct sockaddr*)&(tls_client->local_addr), sizeof(tls_client->local_addr)) < 0) {
         perror("unable to connect");
         free(tls_client);
         return NULL;
@@ -393,4 +442,20 @@ tls_connection* new_tls_connection(char *address, int port) {
     tls_client->ssl = ssl;
     tls_client->ctx = ctx;
     return tls_client;
+}
+
+int set_socket_timeout(tls_connection* conn, int timeout_sec, int timeout_usec) {
+    struct timeval timeout;
+    timeout.tv_sec = timeout_sec;
+    timeout.tv_usec = timeout_usec;
+
+    if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        return -1;
+    }
+
+    if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+        return -1;
+    }
+
+    return 0;
 }
