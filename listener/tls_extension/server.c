@@ -272,6 +272,13 @@ tls_connection* tls_server_accept(tls_server_connection *tls_server) {
     uint32_t len = sizeof(tls_server->addr);
     tls_connection *conn = (tls_connection*)malloc(sizeof(tls_connection));
 
+    if (pthread_mutex_init(&conn->lock, NULL) != 0) {
+        perror("Mutex initialization failed");
+        free(conn);
+        return NULL;
+    }
+    conn->is_shutdown = 0;
+
     int client_fd = accept(tls_server->server_fd, (struct sockaddr*)&(tls_server->addr), &len);
     if (client_fd < 0) {
         perror("Unable to accept");
@@ -306,6 +313,12 @@ char* tls_return_ip(struct sockaddr_in  *addr) {
 }
 
 char* tls_server_return_ip(tls_server_connection *tls_server) {
+    socklen_t len = sizeof(tls_server->addr);
+
+    if (getsockname(tls_server->server_fd, (struct sockaddr*)(&tls_server->addr), &len) == -1) {
+        return NULL;
+    }
+
     return tls_return_ip(&(tls_server->addr));
 }
 
@@ -330,26 +343,82 @@ int tls_write(tls_connection *conn, const void *buf, int num) {
     return SSL_write(conn->ssl, buf, num);
 }
 
-void tls_close(tls_connection *conn) {
+int tls_close(tls_connection *conn) {
+    // pthread_mutex_lock(&conn->lock);
+    if (!conn->is_shutdown) {
+        conn->is_shutdown=1;
+    } else {
+   //      pthread_mutex_unlock(&conn->lock);
+        return 1;
+    }
+//     pthread_mutex_unlock(&conn->lock);
+
     if (conn != NULL) {
+        
         if (conn->ssl != NULL) {
-            SSL_shutdown(conn->ssl);
+            int ret = SSL_shutdown(conn->ssl);
+            printf("Try to shutdown! Ret: %d\n", ret);
+
+            conn->is_shutdown = 1;
+
+            if (ret < 0) {
+                printf("SSL did not shutdown correctly: %d\n", ret);
+                free(conn);
+                close(conn->socket_fd);
+                conn = NULL;
+                // pthread_mutex_unlock(&conn->lock);
+
+                return -1;
+            } else if (ret == 1) {
+                printf("SHUTDOWN SUCCESSFULLY!\n");
+            } else if (ret == 0) {
+                printf("SHUTDOWN in PROGRESS\n");
+                // pthread_mutex_unlock(&conn->lock);
+                return 0;
+            }
+            conn->ssl = NULL;
         }
         if (conn->socket_fd >= 0) {
             close(conn->socket_fd);
+            conn->socket_fd = -1;
         }
         SSL_free(conn->ssl);
         if (conn->ctx != NULL) {
             SSL_CTX_free(conn->ctx);
+            conn->ctx = NULL;
         }
+
         free(conn);
         conn = NULL;
+        printf("tls_close then called\n");
+        // pthread_mutex_unlock(&conn->lock);
+        return 1;
+    } else {
+        printf("tls_close else called\n");
     }
+
+    // pthread_mutex_unlock(&conn->lock);
+    return 0;
 }
 
-void tls_close_cleanup(tls_connection *conn) {
-    tls_close(conn);
-    cleanup_openssl();
+int tls_get_error(tls_connection *conn, int ret) {
+    int err = SSL_get_error(conn->ssl, ret);
+
+    switch (err) {
+        case SSL_ERROR_NONE:
+            return 0;  // No error
+        case SSL_ERROR_ZERO_RETURN:
+            return -1; // TLS connection closed
+        case SSL_ERROR_WANT_READ:
+        case SSL_ERROR_WANT_WRITE:
+            return -2; // Operation not complete, retry later
+        case SSL_ERROR_SYSCALL:
+            return -3; // I/O error
+        case SSL_ERROR_SSL:
+            return -4;
+        default:
+            return -6; // Generic SSL error
+    }
 }
 
 char* tls_conn_return_addr(tls_connection *conn) {
@@ -363,23 +432,22 @@ char* tls_conn_return_addr(tls_connection *conn) {
 }
 
 char* tls_conn_remote_addr(tls_connection *conn) {
-    // socklen_t addr_len = sizeof(conn->remote_addr);
-    // char *ip_str = (char*)malloc(INET_ADDRSTRLEN*sizeof(char));
+    socklen_t addr_len = sizeof(conn->remote_addr);
+    char *ip_str = (char*)malloc(INET_ADDRSTRLEN*sizeof(char));
 
-    // if (getpeername(conn->socket_fd, (struct sockaddr*)&(conn->remote_addr), &addr_len) == -1) {
-    //     perror("getpeername failed");
-    //     free(ip_str);
-    //     return NULL;
-    // }
+    if (getpeername(conn->socket_fd, (struct sockaddr*)&(conn->remote_addr), &addr_len) == -1) {
+        perror("getpeername failed");
+        free(ip_str);
+        return NULL;
+    }
 
-    // if (inet_ntop(AF_INET, &(conn->remote_addr.sin_addr), ip_str, sizeof(ip_str)) == NULL) {
-    //     perror("inet_ntop failed");
-    //     free(ip_str);
-    //     return NULL;
-    // }
+    if (inet_ntop(AF_INET, &(conn->remote_addr.sin_addr), ip_str, INET_ADDRSTRLEN) == NULL) {
+        perror("inet_ntop failed");
+        free(ip_str);
+        return NULL;
+    }
 
-    // return ip_str;
-    return NULL;
+    return ip_str;
 }
 
 int tls_return_local_port(tls_connection *conn) {
@@ -408,6 +476,13 @@ tls_connection* new_tls_connection(char *address, int port) {
         return NULL;
     }
     // add_custom_tls_extension(ctx);
+
+    if (pthread_mutex_init(&tls_client->lock, NULL) != 0) {
+        perror("Mutex initialization failed");
+        free(tls_client);
+        return NULL;
+    }
+    tls_client->is_shutdown = 0;
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {

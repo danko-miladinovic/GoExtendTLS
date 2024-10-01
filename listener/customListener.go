@@ -7,8 +7,10 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
+	"syscall"
 	"time"
 	"unsafe"
 )
@@ -68,7 +70,7 @@ func (l *CustomServerListener) Close() error {
 // do not modify it.
 func (l *CustomServerListener) Addr() net.Addr {
 	cIP := C.tls_server_return_ip(l.tlsListener)
-	// defer C.custom_free(unsafe.Pointer(cIP))
+	defer C.custom_free(unsafe.Pointer(cIP))
 
 	ip := C.GoString(cIP)
 
@@ -90,13 +92,33 @@ type CustomTLSConn struct {
 }
 
 func (c *CustomTLSConn) Read(b []byte) (int, error) {
-	// fmt.Println("CustomTLSConn - Read called")
+	fmt.Println("CustomTLSConn - Read called")
 	n := int(C.tls_read(c.tlsConn, unsafe.Pointer(&b[0]), C.int(len(b))))
-	if n < 0 {
-		return 0, fmt.Errorf("could not read from TLS")
+
+	if n > 0 {
+		return n, nil
 	}
 
-	return n, nil
+	// Call the C function tls_get_error to interpret the error
+	errCode := int(C.tls_get_error(c.tlsConn, C.int(n)))
+
+	// Handle specific error codes returned by tls_get_error
+	switch errCode {
+	case 0:
+		return n, nil // No error
+	case -1:
+		fmt.Println("Connection closed by peer")
+		return 0, io.EOF // Connection closed
+	case -2:
+		fmt.Println("Operation incomplete, retry later")
+		return 0, nil // Non-fatal, just retry later
+	case -3:
+		fmt.Println("I/O error")
+		return 0, syscall.ECONNRESET // Return connection reset error
+	default:
+		fmt.Printf("SSL error occurred: %d\n", errCode)
+		return 0, fmt.Errorf("SSL error")
+	}
 }
 
 func (c *CustomTLSConn) Write(b []byte) (int, error) {
@@ -110,7 +132,14 @@ func (c *CustomTLSConn) Write(b []byte) (int, error) {
 
 func (c *CustomTLSConn) Close() error {
 	fmt.Println("CustomTLSConn - Close called")
-	C.tls_close(c.tlsConn)
+	ret := C.tls_close(c.tlsConn)
+
+	if int(ret) < 0 {
+		return fmt.Errorf("TLSConn did not cose corretly")
+	} else if int(ret) == 1 {
+		fmt.Println("TLSConn closed corretly")
+		c.tlsConn = nil
+	}
 	return nil
 }
 
@@ -140,7 +169,7 @@ func (c *CustomTLSConn) RemoteAddr() net.Addr {
 	fmt.Println("CustomTLSConn - RemoteAddr called")
 	cIP := C.tls_conn_remote_addr(c.tlsConn)
 	if cIP == nil {
-		fmt.Printf("RemoteAddr error while fetching ip")
+		fmt.Println("RemoteAddr error while fetching ip")
 		return nil
 	}
 
@@ -186,7 +215,7 @@ func (c *CustomTLSConn) SetWriteDeadline(t time.Time) error {
 
 func DialTLSClient(hostname string, port int) (net.Conn, error) {
 	cHostName := C.CString(hostname)
-	// defer C.custom_free(unsafe.Pointer(cHostName))
+	defer C.custom_free(unsafe.Pointer(cHostName))
 
 	conn := C.new_tls_connection(cHostName, C.int(port))
 	if conn == nil {
