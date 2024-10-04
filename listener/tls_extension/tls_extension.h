@@ -26,8 +26,6 @@ typedef struct tls_c
     int socket_fd;
     struct sockaddr_in local_addr;
     struct sockaddr_in remote_addr;
-    pthread_mutex_t lock;
-    int is_shutdown;
 } tls_connection;
 
 tls_server_connection* start_tls_server(char *ip, char *cert_file, char *key_file, int port);

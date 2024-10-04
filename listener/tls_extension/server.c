@@ -268,16 +268,8 @@ tls_server_connection* start_tls_server(char *ip, char *cert_file, char *key_fil
 
 // Function to accept a client connection
 tls_connection* tls_server_accept(tls_server_connection *tls_server) {
-    // struct sockaddr_in addr;
     uint32_t len = sizeof(tls_server->addr);
     tls_connection *conn = (tls_connection*)malloc(sizeof(tls_connection));
-
-    if (pthread_mutex_init(&conn->lock, NULL) != 0) {
-        perror("Mutex initialization failed");
-        free(conn);
-        return NULL;
-    }
-    conn->is_shutdown = 0;
 
     int client_fd = accept(tls_server->server_fd, (struct sockaddr*)&(tls_server->addr), &len);
     if (client_fd < 0) {
@@ -343,38 +335,29 @@ int tls_write(tls_connection *conn, const void *buf, int num) {
     return SSL_write(conn->ssl, buf, num);
 }
 
-int tls_close(tls_connection *conn) {
-    // pthread_mutex_lock(&conn->lock);
-    if (!conn->is_shutdown) {
-        conn->is_shutdown=1;
-    } else {
-   //      pthread_mutex_unlock(&conn->lock);
-        return 1;
-    }
-//     pthread_mutex_unlock(&conn->lock);
-
+int tls_close(tls_connection *conn) { // int free_res
     if (conn != NULL) {
         
         if (conn->ssl != NULL) {
-            int ret = SSL_shutdown(conn->ssl);
-            printf("Try to shutdown! Ret: %d\n", ret);
+            int ret = 0;
 
-            conn->is_shutdown = 1;
+            // Maybe delete while loop
+            while(ret != 1) {
+                ret = SSL_shutdown(conn->ssl);
+                printf("Try to shutdown! Ret: %d\n", ret);
 
-            if (ret < 0) {
-                printf("SSL did not shutdown correctly: %d\n", ret);
-                free(conn);
-                close(conn->socket_fd);
-                conn = NULL;
-                // pthread_mutex_unlock(&conn->lock);
-
-                return -1;
-            } else if (ret == 1) {
-                printf("SHUTDOWN SUCCESSFULLY!\n");
-            } else if (ret == 0) {
-                printf("SHUTDOWN in PROGRESS\n");
-                // pthread_mutex_unlock(&conn->lock);
-                return 0;
+                if (ret < 0) {
+                    printf("SSL did not shutdown correctly: %d\n", ret);
+                    free(conn);
+                    close(conn->socket_fd);
+                    conn = NULL;
+                    return -1;
+                } else if (ret == 1) {
+                    printf("SHUTDOWN SUCCESSFULLY!\n");
+                } else if (ret == 0) {
+                    printf("SHUTDOWN in PROGRESS\n");
+                    // return 0;
+                }
             }
             conn->ssl = NULL;
         }
@@ -391,13 +374,11 @@ int tls_close(tls_connection *conn) {
         free(conn);
         conn = NULL;
         printf("tls_close then called\n");
-        // pthread_mutex_unlock(&conn->lock);
         return 1;
     } else {
         printf("tls_close else called\n");
     }
 
-    // pthread_mutex_unlock(&conn->lock);
     return 0;
 }
 
@@ -476,13 +457,6 @@ tls_connection* new_tls_connection(char *address, int port) {
         return NULL;
     }
     // add_custom_tls_extension(ctx);
-
-    if (pthread_mutex_init(&tls_client->lock, NULL) != 0) {
-        perror("Mutex initialization failed");
-        free(tls_client);
-        return NULL;
-    }
-    tls_client->is_shutdown = 0;
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
