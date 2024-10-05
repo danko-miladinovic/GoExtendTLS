@@ -33,7 +33,7 @@ SSL_CTX *create_context(int is_server) {
     if (!ctx) {
         perror("Unable to create SSL context");
         ERR_print_errors_fp(stderr);
-        return NULL; // exit(EXIT_FAILURE);
+        return NULL;
     }
 
     return ctx;
@@ -87,133 +87,42 @@ int compute_sha256_of_public_key(X509 *cert, unsigned char *hash) {
     return 1;  // Success
 }
 
-/* --------------------- NONCE EXTENSION --------------------- */
-
-void nonce_server_ext_free_cb(SSL *s, unsigned int ext_type,
-                                    unsigned int context,
-                                    const unsigned char *out,
-                                    void *add_arg)
-{
-    printf("nonce_server_ext_free_cb from server called\n");
-}
-
-int nonce_server_ext_add_cb(SSL *s, unsigned int ext_type,
-                                unsigned int context,
-                                const unsigned char **out,
-                                size_t *outlen, X509 *x,
-                                size_t chainidx, int *al,
-                                void *add_arg)
-{
-    unsigned char* client_random_buffer = malloc(CLIENT_RANDOM_SIZE);
-    unsigned char* client_random_print_buffer = malloc(CLIENT_RANDOM_SIZE * 2 + 1); 
-    printf("nonce_server_ext_add_cb from server called\n");
-    printf("Context: %u\n", context);
-
-    switch (ext_type) {
-        case CUSTOM_NONCE_EXT_TYPE:
-            printf("NONCE EXTENSION CALLED SERVER!\n");
-            break;
-        default:
-            printf("DEFAULT FOR NONCE SERVER EXT_TYPE CALLED\n");
-            break;
-    }
-    return 0;
-}
-
-int nonce_server_ext_parse_cb(SSL *s, unsigned int ext_type,
-                                          unsigned int context,
-                                          const unsigned char *in,
-                                          size_t inlen, X509 *x,
-                                          size_t chainidx, int *al,
-                                          void *parse_arg)
-{
-    char* hex_buffer = malloc(inlen*2 + 1); 
-    sprint_string_hex(hex_buffer, in, inlen);
-
-    printf("nonce_server_ext_parse_cb from server called\n");
-    printf("Receiving nonce from client: %s\n", hex_buffer);
-    return 1;
-}
-
-/* ----------------------------------------------------------- */
-
-/* --------------------- ATTESTATION EXTENSION --------------------- */
-
-void  attestation_server_ext_free_cb(SSL *s, unsigned int ext_type,
-                                    unsigned int context,
-                                    const unsigned char *out,
-                                    void *add_arg)
-{
-    printf("attestation_server_ext_free_cb from server called\n");
-}
-
-int attestation_server_ext_add_cb(SSL *s, unsigned int ext_type,
-                                unsigned int context,
-                                const unsigned char **out,
-                                size_t *outlen, X509 *x,
-                                size_t chainidx, int *al,
-                                void *add_arg)
-{
-    unsigned char *hash = malloc(SHA256_DIGEST_LENGTH);
-    printf("attestation_server_ext_add_cb from server called\n");
-
-    printf("Context for AR: %u\n", context);
-
-    switch (ext_type) {
-        case SERVER_ATT_REPORT_EXT_TYPE:
-            printf("ATTESTATION\n");
-            compute_sha256_of_public_key(x, hash);
-            *out = hash;
-            *outlen = SHA256_DIGEST_LENGTH;
-            break;
-        default:
-            printf("DEFAULT FOR ATT EXT_TYPE CALLED\n");
-            break;
-    }
-    return 1;
-}
-
-int  attestation_server_ext_parse_cb(SSL *s, unsigned int ext_type,
-                                          unsigned int context,
-                                          const unsigned char *in,
-                                          size_t inlen, X509 *x,
-                                          size_t chainidx, int *al,
-                                          void *parse_arg)
-{
-    // char* hex_buffer = malloc(inlen*2 + 1); 
-    // sprint_string_hex(hex_buffer, in, inlen);
-
-    printf("attestation_server_ext_parse_cb from server called\n");
-    // printf("Receiving nonce from client: %s\n", hex_buffer);
-    return 1;
-}
-
-/* ----------------------------------------------------------------- */
-
 int add_custom_tls_extension(SSL_CTX *ctx) {
     uint32_t flags_nonce = SSL_EXT_CLIENT_HELLO | SSL_EXT_TLS1_3_ENCRYPTED_EXTENSIONS;
     uint32_t flags_attestation = SSL_EXT_CLIENT_HELLO | SSL_EXT_TLS1_3_CERTIFICATE; // SSL_EXT_TLS1_3_SERVER_HELLO
+    int ret = 0;
 
-    // SSL_CTX_add_custom_ext(ctx, 
-    //                     CUSTOM_NONCE_EXT_TYPE,
-    //                     flags_nonce,
-    //                     nonce_server_ext_add_cb, 
-    //                     nonce_server_ext_free_cb, 
-    //                     NULL, 
-    //                     nonce_server_ext_parse_cb, 
-    //                     NULL);
+    ret = SSL_CTX_add_custom_ext(ctx, 
+                            EVIDENCE_REQUEST_HELLO_EXTENSION_TYPE,
+                            flags_nonce,
+                            evidence_request_ext_add_cb, 
+                            evidence_request_ext_free_cb, 
+                            NULL, 
+                            evidence_request_ext_parse_cb, 
+                            NULL);
     
-    SSL_CTX_add_custom_ext(ctx, 
-                        SERVER_ATT_REPORT_EXT_TYPE,
-                        flags_attestation,
-                        attestation_server_ext_add_cb, 
-                        attestation_server_ext_free_cb, 
-                        NULL, 
-                        attestation_server_ext_parse_cb, 
-                        NULL);
+    if (ret != 1) {
+        return 0;
+    }
 
-    return 1;
+    ret = SSL_CTX_add_custom_ext(ctx, 
+                        ATTESTATION_CERTIFICATE_EXTENSION_TYPE,
+                        flags_attestation,
+                        attestation_certificate_ext_add_cb, 
+                        attestation_certificate_ext_free_cb, 
+                        NULL, 
+                        attestation_certificate_ext_parse_cb, 
+                        NULL);
+    if (ret != 1) {
+        return 0;
+    }
+
+    return ret;
 }
+
+// ---------------------------------------------------------------------------------------------------------
+// TLS and Conn functions
+// ---------------------------------------------------------------------------------------------------------
 
 // Function to start the tls server
 tls_server_connection* start_tls_server(char *ip, char *cert_file, char *key_file, int port) {
@@ -232,7 +141,7 @@ tls_server_connection* start_tls_server(char *ip, char *cert_file, char *key_fil
         perror("Unable to create contex");
         return NULL;
     }
-    // add_custom_tls_extension(tls_server->ctx);
+    add_custom_tls_extension(tls_server->ctx);
 
     tls_server->server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (tls_server->server_fd < 0) {
@@ -332,6 +241,10 @@ int tls_read(tls_connection *conn, void *buf, int num) {
 }
 
 int tls_write(tls_connection *conn, const void *buf, int num) {
+    if (SSL_get_shutdown(conn->ssl) & SSL_SENT_SHUTDOWN) {
+        return 0;
+    }
+
     return SSL_write(conn->ssl, buf, num);
 }
 
@@ -342,23 +255,23 @@ int tls_close(tls_connection *conn) { // int free_res
             int ret = 0;
 
             // Maybe delete while loop
-            while(ret != 1) {
-                ret = SSL_shutdown(conn->ssl);
-                printf("Try to shutdown! Ret: %d\n", ret);
+            // while(ret != 1) {
+            ret = SSL_shutdown(conn->ssl);
+            printf("Try to shutdown! Ret: %d\n", ret);
 
-                if (ret < 0) {
-                    printf("SSL did not shutdown correctly: %d\n", ret);
-                    free(conn);
-                    close(conn->socket_fd);
-                    conn = NULL;
-                    return -1;
-                } else if (ret == 1) {
-                    printf("SHUTDOWN SUCCESSFULLY!\n");
-                } else if (ret == 0) {
-                    printf("SHUTDOWN in PROGRESS\n");
-                    // return 0;
-                }
+            if (ret < 0) {
+                printf("SSL did not shutdown correctly: %d\n", ret);
+                free(conn);
+                close(conn->socket_fd);
+                conn = NULL;
+                return -1;
+            } else if (ret == 1) {
+                printf("SHUTDOWN SUCCESSFULLY!\n");
+            } else if (ret == 0) {
+                printf("SHUTDOWN in PROGRESS\n");
+                return 0;
             }
+            // }
             conn->ssl = NULL;
         }
         if (conn->socket_fd >= 0) {
@@ -456,7 +369,7 @@ tls_connection* new_tls_connection(char *address, int port) {
         free(tls_client);
         return NULL;
     }
-    // add_custom_tls_extension(ctx);
+    add_custom_tls_extension(ctx);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {

@@ -2,6 +2,7 @@ package tlsExtension
 
 // #cgo LDFLAGS: -lssl -lcrypto
 // #include "tls_extension/server.c"
+// #include "tls_extension/custom_extension.c"
 import "C"
 
 import (
@@ -16,10 +17,11 @@ import (
 	"unsafe"
 )
 
-const (
-	inetAddrLen = 16
-	// numberOfConnections            = 0
-	// mutex               sync.Mutex = &sync, sync.Mutex{}
+const inetAddrLen = 16
+
+var (
+	numberOfConnections = 0
+	mutex               sync.Mutex
 )
 
 type CustomServerListener struct {
@@ -44,7 +46,6 @@ func Listen(addr string, certFile string, keyFile string) (net.Listener, error) 
 	cIP := C.CString(ip)
 	defer C.custom_free(unsafe.Pointer(cIP))
 
-	fmt.Println("Listen called for something")
 	return &CustomServerListener{tlsListener: C.start_tls_server(cIP, cCertFile, cKeyFile, C.int(p))}, nil
 }
 
@@ -52,11 +53,10 @@ func Listen(addr string, certFile string, keyFile string) (net.Listener, error) 
 // waits for the next call and returns a generic [Conn].
 func (l *CustomServerListener) Accept() (net.Conn, error) {
 	conn := C.tls_server_accept(l.tlsListener)
-
 	if conn == nil {
 		return nil, fmt.Errorf("could not accept connection")
 	}
-	fmt.Printf("CustomServerListener Accept called\n")
+
 	return &CustomTLSConn{tlsConn: conn, shutdown: 0}, nil
 }
 
@@ -101,7 +101,6 @@ type CustomTLSConn struct {
 }
 
 func (c *CustomTLSConn) Read(b []byte) (int, error) {
-	fmt.Println("CustomTLSConn - Read called")
 	c.fdReadMutex.Lock()
 	defer c.fdReadMutex.Unlock()
 
@@ -138,7 +137,6 @@ func (c *CustomTLSConn) Read(b []byte) (int, error) {
 }
 
 func (c *CustomTLSConn) Write(b []byte) (int, error) {
-	fmt.Println("CustomTLSConn - Write called")
 	c.fdWriteMutex.Lock()
 	defer c.fdWriteMutex.Unlock()
 
@@ -154,7 +152,6 @@ func (c *CustomTLSConn) Write(b []byte) (int, error) {
 }
 
 func (c *CustomTLSConn) Close() error {
-	fmt.Println("CustomTLSConn - Close called")
 	c.fdReadMutex.Lock()
 	defer c.fdReadMutex.Unlock()
 
@@ -167,7 +164,6 @@ func (c *CustomTLSConn) Close() error {
 	if c.shutdown == 1 {
 		return nil
 	}
-	c.shutdown = 1
 
 	ret := C.tls_close(c.tlsConn)
 
@@ -176,13 +172,12 @@ func (c *CustomTLSConn) Close() error {
 	} else if int(ret) == 1 {
 		fmt.Println("TLSConn closed corretly")
 		c.tlsConn = nil
+		c.shutdown = 1
 	}
 	return nil
 }
 
 func (c *CustomTLSConn) LocalAddr() net.Addr {
-	fmt.Println("CustomTLSConn - LocalAddr called")
-
 	cIP := C.tls_conn_return_addr(c.tlsConn)
 	ipLength := C.strlen(cIP)
 	defer C.custom_free(unsafe.Pointer(cIP))
@@ -197,13 +192,10 @@ func (c *CustomTLSConn) LocalAddr() net.Addr {
 
 	port := C.tls_return_local_port(c.tlsConn)
 
-	fmt.Printf("CustomTLSConn - LocalAddr IP Address: %s:%d\n", ip, int(port))
-
 	return &net.TCPAddr{IP: parsedIP, Port: int(port)}
 }
 
 func (c *CustomTLSConn) RemoteAddr() net.Addr {
-	fmt.Println("CustomTLSConn - RemoteAddr called")
 	cIP := C.tls_conn_remote_addr(c.tlsConn)
 	if cIP == nil {
 		fmt.Println("RemoteAddr error while fetching ip")
@@ -223,8 +215,6 @@ func (c *CustomTLSConn) RemoteAddr() net.Addr {
 
 	port := C.tls_return_remote_port(c.tlsConn)
 
-	fmt.Printf("CustomTLSConn - RemoteAddr IP Address: %s:%d\n", ip, int(port))
-
 	return &net.TCPAddr{IP: parsedIP, Port: int(port)}
 }
 
@@ -241,18 +231,15 @@ func (c *CustomTLSConn) SetDeadline(t time.Time) error {
 		return fmt.Errorf("could not set deadline")
 	}
 
-	fmt.Println("CustomTLSConn - SetDeadline called")
 	return nil
 }
 
 func (c *CustomTLSConn) SetReadDeadline(t time.Time) error {
-	fmt.Println("CustomTLSConn - SetReadDeadline called")
 	c.SetDeadline(t)
 	return nil
 }
 
 func (c *CustomTLSConn) SetWriteDeadline(t time.Time) error {
-	fmt.Println("CustomTLSConn - SetWriteDeadline called")
 	c.SetDeadline(t)
 	return nil
 }
@@ -285,7 +272,6 @@ func CustomDialer(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, fmt.Errorf("could not create TLS connection")
 	}
 
-	fmt.Printf("Created CustomDialer\n")
 	return conn, nil
 }
 
